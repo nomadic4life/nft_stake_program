@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
+    // associated_token,
     associated_token::AssociatedToken,
     token::{Mint, Token, TokenAccount},
 };
@@ -13,17 +14,75 @@ pub mod nft_stake_program {
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let Initialize {
             new_signer,
+            token_mint,
             token_account,
-            associated_token_account,
             ..
         } = ctx.accounts;
 
         new_signer.is_initialized = true;
         new_signer.is_signer = true;
         new_signer.program_id = ctx.program_id.clone();
+        new_signer.token_mint = token_mint.key();
         new_signer.token_account = token_account.key();
-        new_signer.associated_token_account = associated_token_account.key();
 
+        return Ok(());
+    }
+
+    pub fn initialize_locked_account(ctx: Context<InitializeLockedAccount>) -> Result<()> {
+
+        let InitializeLockedAccount{
+            locked_account,
+            authority,
+            nft_owner_account,
+            nft_mint,
+            ..
+        } = ctx.accounts;
+
+        locked_account.authority = authority.key();
+        locked_account.nft_mint = nft_mint.key();
+        locked_account.nft_account = nft_owner_account.key();
+
+
+        return Ok(());
+    }
+
+    pub fn stake_account(ctx: Context<StakeAccount>) -> Result<()> {
+
+        let clock = Clock::get()?;
+
+        // become freeze authority of nft mint
+        // freeze mint
+
+        
+        ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
+        ctx.accounts.locked_account.is_locked = true;
+
+        return Ok(());
+    }
+
+    pub fn unstake_account(ctx: Context<StakeAccount>) -> Result<()> {
+
+        let clock = Clock::get()?;
+
+        // thaw mint
+        // revoke freeze authority
+        // compute rewards
+        // transfer rewards
+
+        
+        ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
+        ctx.accounts.locked_account.is_locked = false;
+
+        return Ok(());
+    }
+
+    pub fn mint_tokens(ctx: Context<MintTokens>) -> Result<()> {
+
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+
+        msg!("slot: {},", slot);
+        msg!("{}", ctx.accounts.authority.key());
         return Ok(());
     }
 }
@@ -49,20 +108,129 @@ pub struct Initialize<'info> {
         mint::authority = new_signer,
         mint::freeze_authority = new_signer,
     )]
-    pub token_account: Account<'info, Mint>,
+    pub token_mint: Account<'info, Mint>,
 
     #[account(
         init,
         payer = payer,
-        associated_token::mint = token_account,
+        associated_token::mint = token_mint,
         associated_token::authority = new_signer,
         associated_token::token_program = token_program,
     )]
-    pub associated_token_account: Account<'info, TokenAccount>,
+    pub token_account: Account<'info, TokenAccount>,
 
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeLockedAccount<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 32 + 32 + 32 + 1 + 8,
+        seeds = [
+            authority.key().as_ref(),
+            nft_owner_account.key().as_ref(),            
+            nft_mint.key().as_ref(),
+            program_signer.key().as_ref(),
+        ],
+        bump
+    )]
+    pub locked_account: Account<'info, LockedAccount>,
+
+    #[account(
+        // need verify NFT is not frozen, authority is owner, and is correct mint, and account is holding NFT
+        constraint = !nft_owner_account.is_frozen() 
+        && nft_owner_account.amount == 1
+        && nft_owner_account.mint.key().as_ref() == nft_mint.key().as_ref()
+        && nft_owner_account.owner.key().as_ref() == authority.key().as_ref()
+    )]
+    pub nft_owner_account: Account<'info, TokenAccount>,
+
+    #[account(
+        // need to verify is an NFT and meets SPL SPEC
+        constraint = nft_mint.mint_authority.is_none()
+        && nft_mint.supply == 1 && nft_mint.decimals == 0
+        // && nft_mint.freeze_authority.unwrap() == authority.key().as_ref()
+    )]
+    pub nft_mint: Account<'info, Mint>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct MintTokens<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+
+    #[account(
+        has_one = authority
+    )]
+    pub locked_account: Account<'info, LockedAccount>,
+
+    #[account(
+        constraint = user_associated_token_account.owner.as_ref() == authority.key().as_ref()
+    )]
+    pub user_associated_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        mint::authority = program_signer
+    )]
+    pub token_account: Account<'info, Mint>,
+
+    pub nft_account: Account<'info, Mint>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct MintNFT<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct StakeAccount<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            nft_owner.key().as_ref(),            
+            nft_mint.key().as_ref(),
+            program_signer.key().as_ref(),
+        ],
+        bump
+    )]
+    pub locked_account: Account<'info, LockedAccount>,
+
+    pub nft_owner: Account<'info, TokenAccount>,
+    pub nft_mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[account]
@@ -70,8 +238,18 @@ pub struct SignerAccount {
     pub is_initialized: bool,
     pub is_signer: bool,
     pub program_id: Pubkey,
+    pub token_mint: Pubkey,
     pub token_account: Pubkey,
-    pub associated_token_account: Pubkey,
+}
+
+#[account]
+pub struct LockedAccount {
+    pub authority: Pubkey,
+    pub nft_mint: Pubkey,
+    pub nft_account: Pubkey,
+    // pub owner: Pubkey,
+    pub is_locked: bool,
+    pub locked_date: i64,
 }
 
 // NOTES:
