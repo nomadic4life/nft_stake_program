@@ -2,13 +2,23 @@ use anchor_lang::prelude::*;
 use anchor_spl::{
     // associated_token,
     associated_token::AssociatedToken,
-    token::{Mint, Token, TokenAccount},
+    token::{
+        Mint, 
+        MintTo, 
+        mint_to, 
+        Token, 
+        TokenAccount, 
+        set_authority, 
+        SetAuthority, 
+    },
 };
 
 declare_id!("5aAd37dwy2StNmb9dkkmoC7HzWKUgtdJooXWimG5MpX5");
 
 #[program]
 pub mod nft_stake_program {
+    use anchor_spl::token::spl_token::instruction::AuthorityType;
+
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
@@ -85,6 +95,37 @@ pub mod nft_stake_program {
         msg!("{}", ctx.accounts.authority.key());
         return Ok(());
     }
+
+    pub fn mint_nft(ctx: Context<MintNFT>) -> Result<()> {
+
+        let MintNFT {
+            user,
+            nft_account,
+            nft_mint,
+            token_program,
+            ..
+        } = ctx.accounts;
+
+        mint_to(CpiContext::new(
+            token_program.to_account_info(),
+            MintTo {
+                mint: nft_mint.to_account_info(),
+                to: nft_account.to_account_info(),
+                authority: user.to_account_info(),
+            },
+        ), 1)?;
+
+        set_authority(CpiContext::new(
+            token_program.to_account_info(),
+            SetAuthority {
+                current_authority: user.to_account_info(),
+                account_or_mint: nft_mint.to_account_info(),
+            }
+
+        ), AuthorityType::MintTokens, None)?;
+
+        return Ok(());
+    }
 }
 
 #[derive(Accounts)]
@@ -95,7 +136,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = payer,
-        space = 8 + 1 + 1 + 32 + 32 + 32,
+        space = 8 + 1 + 1 + 32 + 32 + 32 + 1,
         seeds = [b"signer"],
         bump,
     )]
@@ -204,6 +245,28 @@ pub struct MintTokens<'info> {
 pub struct MintNFT<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
+
+    #[account(
+        init,
+        payer = user,
+        mint::authority = user,
+        mint::decimals = 0,
+        mint::freeze_authority = user,
+    )]
+    pub nft_mint: Account<'info, Mint>,
+
+    #[account(
+        init,
+        payer = user,
+        associated_token::mint = nft_mint,
+        associated_token::authority = user
+    )]
+    pub nft_account: Account<'info, TokenAccount>,
+
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -240,6 +303,7 @@ pub struct SignerAccount {
     pub program_id: Pubkey,
     pub token_mint: Pubkey,
     pub token_account: Pubkey,
+    pub bump: u8,
 }
 
 #[account]
@@ -250,6 +314,7 @@ pub struct LockedAccount {
     // pub owner: Pubkey,
     pub is_locked: bool,
     pub locked_date: i64,
+    pub bump: u8,
 }
 
 // NOTES:

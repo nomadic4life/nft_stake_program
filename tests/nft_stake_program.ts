@@ -25,97 +25,78 @@ const {
 
 class Token {
 
-  owner: anchor.web3.Keypair;
-  mintAuthority: anchor.web3.Keypair;
-  freezeAuthority: anchor.web3.Keypair;
-  tokenMint: anchor.web3.PublicKey;
+  payer: anchor.web3.Keypair;
+  mintAuthority: anchor.web3.PublicKey;
+  freezeAuthority: anchor.web3.PublicKey;
+  tokenMint: anchor.web3.Keypair;
 
-  constructor() {
-  }
+  generate = async (anchor: any, provider: any, authority: any) => {
 
-  generate = async (anchor: any, provider: any) => {
+    const { tokenMint, owner } = authority
     const { Keypair } = anchor.web3
     const { connection } = provider
-    this.owner = Keypair.generate();
-    this.mintAuthority = this.owner;
-    this.freezeAuthority = this.owner;
 
-    const airdropSignature = await connection.requestAirdrop(this.owner.publicKey, 100 * LAMPORTS_PER_SOL)
+    this.mintAuthority = owner;
+    this.freezeAuthority = owner;
+    this.tokenMint = tokenMint;
+    this.payer = Keypair.generate()
+
+    const airdropSignature = await connection.requestAirdrop(this.payer.publicKey, 2 * LAMPORTS_PER_SOL)
     const latestBlockHash = await connection.getLatestBlockhash()
 
     await connection.confirmTransaction({
       blockhash: latestBlockHash.blockhash,
       lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
       signature: airdropSignature,
-    })
+    }, "finalized");
   }
 
-  mint = async (provider: any) => {
-    const { connection } = provider
-    this.tokenMint = await createMint(
-      connection,
-      this.owner,
-      this.mintAuthority.publicKey,
-      this.freezeAuthority.publicKey,
-      9
-    )
+  getAccounts() {
+
+    return {
+      payer: this.payer,
+      mintAuthority: this.mintAuthority,
+      freezeAuthority: this.freezeAuthority,
+      tokenMint: this.tokenMint,
+    }
   }
 
-  getTokenAccount = async (provider: any, owner: any) => {
-
-    const { connection } = provider
-    const { publicKey } = owner
-    const payer = this.owner
-    const mint = this.tokenMint
-
-    return await getOrCreateAssociatedTokenAccount(
-      connection,
-      payer,
-      mint,
-      publicKey
+  getBump(program: any) {
+    const [_, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("signer")],
+      program.programId
     )
+
+    return bump
   }
 
-  airdrop = async (provider: any, owner: any, amount: any) => {
+}
 
-    const { connection } = provider
-    const { publicKey } = owner
-    const payer = this.owner
-    const mint = this.tokenMint
-    const mintAuthority = this.mintAuthority
+class User {
+  authority: anchor.web3.Keypair;
+  associatedTokenAccount: anchor.web3.PublicKey;
+  nftAccount: anchor.web3.PublicKey;
+  nftMint: anchor.web3.Keypair;
 
+  generate = async (connection: any) => {
 
-    // // need airdrop sol first
-    // await connection.requestAirdrop(publicKey, 100 * LAMPORTS_PER_SOL)
+    const user = Keypair.generate()
+    const mint = Keypair.generate()
+    const account = getAssociatedTokenAddressSync(mint.publicKey, user.publicKey, true)
 
-    const tokenAccount = await getOrCreateAssociatedTokenAccount(
-      connection,
-      payer,
-      mint,
-      publicKey
-    )
+    const airdropSignature = await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL)
+    const latestBlockHash = await connection.getLatestBlockhash()
 
-    await mintTo(
-      connection,
-      payer,
-      mint,
-      tokenAccount.address,
-      mintAuthority,
-      amount
-    )
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: airdropSignature,
+    }, "confirmed");
 
+    this.authority = user
+    this.nftAccount = account
+    this.nftMint = mint
   }
-
-  getProgramTokenAccount = async (provider, seed, programId) => {
-
-    const [authorhizeAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-      seed,
-      programId
-    )
-
-    return await this.getTokenAccount(provider, { owner: authorhizeAccount })
-  }
-
 }
 
 class Chain {
@@ -149,7 +130,8 @@ describe("nft_stake_program", () => {
   const { connection } = provider
 
   const program = anchor.workspace.NftStakeProgram as Program<NftStakeProgram>;
-
+  const token = new Token()
+  const user = new User()
 
   before("", async () => {
     console.log(process.argv.includes('unstake'))
@@ -158,32 +140,38 @@ describe("nft_stake_program", () => {
     // await exec('solana program deploy ./dependencies/deploy/token_program.so --keypair ./dependencies/wallets/main.json --commitment finalized')
     // await exec('solana program deploy ./dependencies/deploy/associated_token_program.so --keypair ./dependencies/wallets/main.json --commitment finalized')
 
-
-
-  })
-
-  it("false test case!", async () => {
-
     const [program_signer, bump] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("signer")],
       program.programId
     )
 
-    const payer = anchor.web3.Keypair.generate()
     const tokenMint = anchor.web3.Keypair.generate()
-    const tokenAccount = getAssociatedTokenAddressSync(tokenMint.publicKey, program_signer, true)
 
-    console.log(program_signer)
-    console.log(program.programId)
 
-    const airdropSignature = await connection.requestAirdrop(payer.publicKey, 2 * LAMPORTS_PER_SOL)
-    const latestBlockHash = await connection.getLatestBlockhash()
+    await token.generate(anchor, provider, {
+      owner: program_signer,
+      tokenMint: tokenMint,
+    })
 
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: airdropSignature,
-    }, "finalized");
+    await user.generate(provider.connection)
+
+  })
+
+  it("initialize program state, signer, and token mint", async () => {
+
+    const {
+      tokenMint,
+      mintAuthority: program_signer,
+      payer,
+    } = token.getAccounts()
+
+    const tokenAccount = getAssociatedTokenAddressSync(
+      tokenMint.publicKey,
+      program_signer,
+      true
+    )
+
+    const bump = token.getBump(program)
 
 
     const tx = await program.methods.initialize()
@@ -199,8 +187,75 @@ describe("nft_stake_program", () => {
       .signers([payer, tokenMint])
       .rpc();
     console.log("Your transaction signature", tx);
+
+    const latestBlockHash = await connection.getLatestBlockhash()
+
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: tx,
+    }, "confirmed");
   });
 
+
+  it("Mint NFT", async () => {
+
+    const tx = await program.methods.mintNft()
+      .accounts({
+        user: user.authority.publicKey,
+        nftAccount: user.nftAccount,
+        nftMint: user.nftMint.publicKey,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([user.authority, user.nftMint])
+      .rpc();
+    console.log("Your transaction signature", tx);
+
+    const latestBlockHash = await connection.getLatestBlockhash()
+
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: tx,
+    }, "confirmed");
+  })
+
+  if (false) {
+
+
+    it("initialize locked account state to keep track of staked NFT.", async () => {
+
+      const {
+        tokenMint,
+        mintAuthority: program_signer,
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+      const tx = await program.methods.initializeLockedAccount()
+        .accounts({
+          authority: user.authority.publicKey,
+          programSigner: program_signer,
+          lockedAccount: lockedAccount,
+          nftOwnerAccount: user.nftAccount,
+          nftMint: user.nftMint.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([user.authority])
+        .rpc();
+      console.log("Your transaction signature", tx);
+    })
+  }
 
 
 });
