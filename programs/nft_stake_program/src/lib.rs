@@ -21,7 +21,7 @@ pub mod nft_stake_program {
 
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, bump: u8) -> Result<()> {
         let Initialize {
             new_signer,
             token_mint,
@@ -34,23 +34,25 @@ pub mod nft_stake_program {
         new_signer.program_id = ctx.program_id.clone();
         new_signer.token_mint = token_mint.key();
         new_signer.token_account = token_account.key();
+        new_signer.bump = bump;
 
         return Ok(());
     }
 
-    pub fn initialize_locked_account(ctx: Context<InitializeLockedAccount>) -> Result<()> {
+    pub fn initialize_locked_account(ctx: Context<InitializeLockedAccount>, bump: u8) -> Result<()> {
 
         let InitializeLockedAccount{
             locked_account,
             authority,
-            nft_owner_account,
+            nft_owner,
             nft_mint,
             ..
         } = ctx.accounts;
 
         locked_account.authority = authority.key();
         locked_account.nft_mint = nft_mint.key();
-        locked_account.nft_account = nft_owner_account.key();
+        locked_account.nft_account = nft_owner.key();
+        locked_account.bump = bump;
 
 
         return Ok(());
@@ -179,10 +181,10 @@ pub struct InitializeLockedAccount<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 32 + 32 + 1 + 8,
+        space = 8 + 32 + 32 + 32 + 1 + 8 + 1,
         seeds = [
             authority.key().as_ref(),
-            nft_owner_account.key().as_ref(),            
+            nft_owner.key().as_ref(),            
             nft_mint.key().as_ref(),
             program_signer.key().as_ref(),
         ],
@@ -192,12 +194,12 @@ pub struct InitializeLockedAccount<'info> {
 
     #[account(
         // need verify NFT is not frozen, authority is owner, and is correct mint, and account is holding NFT
-        constraint = !nft_owner_account.is_frozen() 
-        && nft_owner_account.amount == 1
-        && nft_owner_account.mint.key().as_ref() == nft_mint.key().as_ref()
-        && nft_owner_account.owner.key().as_ref() == authority.key().as_ref()
+        constraint = !nft_owner.is_frozen() 
+        && nft_owner.amount == 1
+        && nft_owner.mint.key().as_ref() == nft_mint.key().as_ref()
+        && nft_owner.owner.key().as_ref() == authority.key().as_ref()
     )]
-    pub nft_owner_account: Account<'info, TokenAccount>,
+    pub nft_owner: Account<'info, TokenAccount>,
 
     #[account(
         // need to verify is an NFT and meets SPL SPEC
@@ -311,7 +313,6 @@ pub struct LockedAccount {
     pub authority: Pubkey,
     pub nft_mint: Pubkey,
     pub nft_account: Pubkey,
-    // pub owner: Pubkey,
     pub is_locked: bool,
     pub locked_date: i64,
     pub bump: u8,
