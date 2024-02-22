@@ -9,6 +9,8 @@ import {
   mintTo,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  getAccount,
+  getMint,
 } from '@solana/spl-token';
 
 import fs from 'fs/promises';
@@ -157,6 +159,7 @@ describe("nft_stake_program", () => {
 
   })
 
+
   it("initialize program state, signer, and token mint", async () => {
 
     const {
@@ -212,10 +215,7 @@ describe("nft_stake_program", () => {
       .signers([user.authority, user.nftMint])
       .rpc();
     console.log("Your transaction signature", tx);
-
-
   })
-
 
 
   it("initialize locked account state to keep track of staked NFT.", async () => {
@@ -254,8 +254,76 @@ describe("nft_stake_program", () => {
       lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
       signature: tx,
     }, "confirmed");
+
+    // add assertions to check for if account state is initialized with correct state
+    const account = await getAccount(
+      provider.connection,
+      user.nftAccount
+    )
+
+    const mint = await getMint(
+      provider.connection,
+      user.nftMint.publicKey
+    )
+
+    console.log(account)
+
+    console.log(mint)
   })
 
+
+  it("stake NFT", async () => {
+
+    const {
+      mintAuthority: program_signer,
+    } = token.getAccounts()
+
+    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        user.authority.publicKey.toBuffer(),
+        user.nftAccount.toBuffer(),
+        user.nftMint.publicKey.toBuffer(),
+        program_signer.toBuffer(),
+      ],
+      program.programId
+    )
+
+
+    const tx = await program.methods.stakeAccount()
+      .accounts({
+        authority: user.authority.publicKey,
+        programSigner: program_signer,
+        lockedAccount: lockedAccount,
+        nftOwner: user.nftAccount,
+        nftMint: user.nftMint.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([user.authority])
+      .rpc();
+    console.log("Your transaction signature", tx);
+
+    const latestBlockHash = await connection.getLatestBlockhash()
+
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: tx,
+    }, "confirmed");
+
+    const account = await getAccount(
+      provider.connection,
+      user.nftAccount
+    )
+
+    const mint = await getMint(
+      provider.connection,
+      user.nftMint.publicKey
+    )
+
+    console.log(account)
+
+    console.log(mint)
+  })
 
 });
 

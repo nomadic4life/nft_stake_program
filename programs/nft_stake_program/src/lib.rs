@@ -10,6 +10,8 @@ use anchor_spl::{
         TokenAccount, 
         set_authority, 
         SetAuthority, 
+        FreezeAccount,
+        freeze_account,
     },
 };
 
@@ -36,65 +38,6 @@ pub mod nft_stake_program {
         new_signer.token_account = token_account.key();
         new_signer.bump = bump;
 
-        return Ok(());
-    }
-
-    pub fn initialize_locked_account(ctx: Context<InitializeLockedAccount>, bump: u8) -> Result<()> {
-
-        let InitializeLockedAccount{
-            locked_account,
-            authority,
-            nft_owner,
-            nft_mint,
-            ..
-        } = ctx.accounts;
-
-        locked_account.authority = authority.key();
-        locked_account.nft_mint = nft_mint.key();
-        locked_account.nft_account = nft_owner.key();
-        locked_account.bump = bump;
-
-
-        return Ok(());
-    }
-
-    pub fn stake_account(ctx: Context<StakeAccount>) -> Result<()> {
-
-        let clock = Clock::get()?;
-
-        // become freeze authority of nft mint
-        // freeze mint
-
-        
-        ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
-        ctx.accounts.locked_account.is_locked = true;
-
-        return Ok(());
-    }
-
-    pub fn unstake_account(ctx: Context<StakeAccount>) -> Result<()> {
-
-        let clock = Clock::get()?;
-
-        // thaw mint
-        // revoke freeze authority
-        // compute rewards
-        // transfer rewards
-
-        
-        ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
-        ctx.accounts.locked_account.is_locked = false;
-
-        return Ok(());
-    }
-
-    pub fn mint_tokens(ctx: Context<MintTokens>) -> Result<()> {
-
-        let clock = Clock::get()?;
-        let slot = clock.slot;
-
-        msg!("slot: {},", slot);
-        msg!("{}", ctx.accounts.authority.key());
         return Ok(());
     }
 
@@ -128,6 +71,97 @@ pub mod nft_stake_program {
 
         return Ok(());
     }
+
+    pub fn initialize_locked_account(ctx: Context<InitializeLockedAccount>, bump: u8) -> Result<()> {
+
+        let InitializeLockedAccount{
+            locked_account,
+            authority,
+            nft_owner,
+            nft_mint,
+            ..
+        } = ctx.accounts;
+
+        locked_account.authority = authority.key();
+        locked_account.nft_mint = nft_mint.key();
+        locked_account.nft_account = nft_owner.key();
+        locked_account.bump = bump;
+
+
+        return Ok(());
+    }
+
+    pub fn stake_account(ctx: Context<StakeAccount>) -> Result<()> {
+
+        let StakeAccount {
+            authority,
+            program_signer,
+            nft_owner,
+            nft_mint,
+            token_program,
+            locked_account,
+        } = ctx.accounts;
+
+        let bump = program_signer.bump.to_le_bytes();
+        let inner=vec!["signer".as_ref(),bump.as_ref()];
+        let outer=vec![inner.as_slice()];
+
+        let clock = Clock::get()?;
+
+        set_authority(CpiContext::new(
+            token_program.to_account_info(),
+            SetAuthority {
+                current_authority: authority.to_account_info(),
+                account_or_mint: nft_mint.to_account_info(),
+            }
+
+        ), AuthorityType::FreezeAccount, Some(program_signer.key()))?;
+
+
+        freeze_account(CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            FreezeAccount {
+                account: nft_owner.to_account_info(),
+                mint: nft_mint.to_account_info(),
+                authority: program_signer.to_account_info(),
+            },
+            &outer.as_ref()
+        ))?;
+
+        
+        locked_account.locked_date = clock.unix_timestamp;
+        locked_account.is_locked = true;
+
+        return Ok(());
+    }
+
+    // pub fn unstake_account(ctx: Context<StakeAccount>) -> Result<()> {
+
+    //     let clock = Clock::get()?;
+
+    //     // thaw mint
+    //     // revoke freeze authority
+    //     // compute rewards
+    //     // transfer rewards
+
+        
+    //     ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
+    //     ctx.accounts.locked_account.is_locked = false;
+
+    //     return Ok(());
+    // }
+
+    pub fn mint_tokens(ctx: Context<MintTokens>) -> Result<()> {
+
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+
+        msg!("slot: {},", slot);
+        msg!("{}", ctx.accounts.authority.key());
+        return Ok(());
+    }
+
+
 }
 
 #[derive(Accounts)]
@@ -161,6 +195,34 @@ pub struct Initialize<'info> {
         associated_token::token_program = token_program,
     )]
     pub token_account: Account<'info, TokenAccount>,
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct MintNFT<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        init,
+        payer = user,
+        mint::authority = user,
+        mint::decimals = 0,
+        mint::freeze_authority = user,
+    )]
+    pub nft_mint: Account<'info, Mint>,
+
+    #[account(
+        init,
+        payer = user,
+        associated_token::mint = nft_mint,
+        associated_token::authority = user
+    )]
+    pub nft_account: Account<'info, TokenAccount>,
+
 
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub token_program: Program<'info, Token>,
@@ -203,13 +265,50 @@ pub struct InitializeLockedAccount<'info> {
 
     #[account(
         // need to verify is an NFT and meets SPL SPEC
+        // question is it possible to set the freeze authority if the freeze authority is already none?
+        // the way I reason about it, that it is not possible, if it were then anyone has the authority
+        // to make changes to the freeze authority. or is there anohter way to handle this?
         constraint = nft_mint.mint_authority.is_none()
         && nft_mint.supply == 1 && nft_mint.decimals == 0
-        // && nft_mint.freeze_authority.unwrap() == authority.key().as_ref()
+        
+        // want to test if using is_some will help prevent a panic?
+        && nft_mint.freeze_authority.is_some()
+        && nft_mint.freeze_authority.unwrap().as_ref() == authority.key().as_ref()
     )]
     pub nft_mint: Account<'info, Mint>,
 
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct StakeAccount<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            nft_owner.key().as_ref(),            
+            nft_mint.key().as_ref(),
+            program_signer.key().as_ref(),
+        ],
+        bump
+    )]
+    locked_account: Account<'info, LockedAccount>,
+
+    #[account(mut)]
+    nft_owner: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    nft_mint: Account<'info, Mint>,
+    token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -243,60 +342,6 @@ pub struct MintTokens<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-#[derive(Accounts)]
-pub struct MintNFT<'info> {
-    #[account(mut)]
-    pub user: Signer<'info>,
-
-    #[account(
-        init,
-        payer = user,
-        mint::authority = user,
-        mint::decimals = 0,
-        mint::freeze_authority = user,
-    )]
-    pub nft_mint: Account<'info, Mint>,
-
-    #[account(
-        init,
-        payer = user,
-        associated_token::mint = nft_mint,
-        associated_token::authority = user
-    )]
-    pub nft_account: Account<'info, TokenAccount>,
-
-
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct StakeAccount<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
-    #[account(
-        seeds = [b"signer"],
-        bump
-    )]
-    pub program_signer: Account<'info, SignerAccount>,
-
-    #[account(
-        seeds = [
-            authority.key().as_ref(),
-            nft_owner.key().as_ref(),            
-            nft_mint.key().as_ref(),
-            program_signer.key().as_ref(),
-        ],
-        bump
-    )]
-    pub locked_account: Account<'info, LockedAccount>,
-
-    pub nft_owner: Account<'info, TokenAccount>,
-    pub nft_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-}
 
 #[account]
 pub struct SignerAccount {
