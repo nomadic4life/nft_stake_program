@@ -17,6 +17,7 @@ import {
 import fs from 'fs/promises';
 import util from 'node:util';
 import child from 'node:child_process'
+import { assert } from "chai";
 const exec = util.promisify(child.exec)
 
 const {
@@ -150,8 +151,9 @@ describe("nft_stake_program", () => {
   const token = new Token()
   const user = new User()
 
+
   before(async () => {
-    console.log(process.argv.includes('unstake'))
+    // console.log(process.argv.includes('unstake'))
     // await exec('solana-keygen new -o ./dependencies/wallets/main.json --force --no-bip39-passphrase')
     // await exec('solana airdrop 100 --keypair ./dependencies/wallets/main.json --commitment finalized')
     // await exec('solana program deploy ./dependencies/deploy/token_program.so --keypair ./dependencies/wallets/main.json --commitment finalized')
@@ -175,272 +177,277 @@ describe("nft_stake_program", () => {
   })
 
 
-  it("initialize program state, signer, and token mint.", async () => {
+  describe("run each endpoint sequentially:", () => {
 
-    const {
-      tokenMint,
-      mintAuthority: program_signer,
-      payer,
-    } = token.getAccounts()
+    it("initialize program state, signer, and token mint.", async () => {
 
-    const tokenAccount = getAssociatedTokenAddressSync(
-      tokenMint.publicKey,
-      program_signer,
-      true
-    )
+      const {
+        tokenMint,
+        mintAuthority: program_signer,
+        payer,
+      } = token.getAccounts()
 
-    const bump = token.getBump(program)
+      const tokenAccount = getAssociatedTokenAddressSync(
+        tokenMint.publicKey,
+        program_signer,
+        true
+      )
 
-
-    const tx = await program.methods.initialize(bump)
-      .accounts({
-        payer: payer.publicKey,
-        newSigner: program_signer,
-        tokenMint: tokenMint.publicKey,
-        tokenAccount: tokenAccount,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([payer, tokenMint])
-      .rpc();
-
-    // console.log("Your transaction signature", tx);
-
-    const latestBlockHash = await connection.getLatestBlockhash()
-
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: tx,
-    }, "confirmed");
-  });
+      const bump = token.getBump(program)
 
 
-  it("Mint NFT.", async () => {
+      const tx = await program.methods.initialize(bump)
+        .accounts({
+          payer: payer.publicKey,
+          newSigner: program_signer,
+          tokenMint: tokenMint.publicKey,
+          tokenAccount: tokenAccount,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([payer, tokenMint])
+        .rpc();
 
-    const tx = await program.methods.mintNft()
-      .accounts({
-        user: user.authority.publicKey,
-        nftAccount: user.nftAccount,
-        nftMint: user.nftMint.publicKey,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([user.authority, user.nftMint])
-      .rpc();
-    // console.log("Your transaction signature", tx);
+      // console.log("Your transaction signature", tx);
+
+      const latestBlockHash = await connection.getLatestBlockhash()
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: tx,
+      }, "confirmed");
+    });
+
+
+    it("Mint NFT.", async () => {
+
+      const tx = await program.methods.mintNft()
+        .accounts({
+          user: user.authority.publicKey,
+          nftAccount: user.nftAccount,
+          nftMint: user.nftMint.publicKey,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([user.authority, user.nftMint])
+        .rpc();
+      // console.log("Your transaction signature", tx);
+    })
+
+
+    it("initialize locked account state to keep track of staked NFT.", async () => {
+
+      const {
+        mintAuthority: program_signer,
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+      const tx = await program.methods.initializeLockedAccount(bump)
+        .accounts({
+          authority: user.authority.publicKey,
+          programSigner: program_signer,
+          lockedAccount: lockedAccount,
+          nftOwner: user.nftAccount,
+          nftMint: user.nftMint.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([user.authority])
+        .rpc();
+
+      // console.log("Your transaction signature", tx);
+
+      const latestBlockHash = await connection.getLatestBlockhash()
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: tx,
+      }, "confirmed");
+
+      // add assertions to check for if account state is initialized with correct state
+      // const account = await getAccount(
+      //   provider.connection,
+      //   user.nftAccount
+      // )
+
+      // const mint = await getMint(
+      //   provider.connection,
+      //   user.nftMint.publicKey
+      // )
+
+      // console.log(account)
+
+      // console.log(mint)
+    })
+
+
+    it("stake NFT.", async () => {
+
+      const {
+        mintAuthority: program_signer,
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+
+      const tx = await program.methods.stakeAccount()
+        .accounts({
+          authority: user.authority.publicKey,
+          programSigner: program_signer,
+          lockedAccount: lockedAccount,
+          nftOwner: user.nftAccount,
+          nftMint: user.nftMint.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([user.authority])
+        .rpc();
+
+      // console.log("Your transaction signature", tx);
+
+      const latestBlockHash = await connection.getLatestBlockhash()
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: tx,
+      }, "confirmed");
+
+      // const account = await getAccount(
+      //   provider.connection,
+      //   user.nftAccount
+      // )
+
+      // const mint = await getMint(
+      //   provider.connection,
+      //   user.nftMint.publicKey
+      // )
+
+      // console.log(account)
+
+      // console.log(mint)
+    })
+
+
+    it("unstake NFT.", async () => {
+
+      const {
+        mintAuthority: program_signer,
+        tokenMint
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+      await user.getAssociatedtoken(provider.connection, tokenMint)
+
+
+      const tx = await program.methods.unstakeAccount()
+        .accounts({
+          authority: user.authority.publicKey,
+          userAssociatedTokenAccount: user.associatedTokenAccount,
+          programSigner: program_signer,
+          lockedAccount: lockedAccount,
+          nftOwner: user.nftAccount,
+          nftMint: user.nftMint.publicKey,
+          tokenMint: tokenMint.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([user.authority])
+        .rpc();
+
+      // console.log("Your transaction signature", tx);
+
+      const latestBlockHash = await connection.getLatestBlockhash()
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: tx,
+      }, "confirmed");
+
+      // const account = await getAccount(
+      //   provider.connection,
+      //   user.nftAccount
+      // )
+
+      // const mint = await getMint(
+      //   provider.connection,
+      //   user.nftMint.publicKey
+      // )
+
+      // console.log(account)
+
+      // console.log(mint)
+    })
+
+
+    it("close locked account.", async () => {
+
+      const {
+        mintAuthority: program_signer,
+        payer,
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+      const tx = await program.methods.closeLockedAccount()
+        .accounts({
+          payer: payer.publicKey,
+          programSigner: program_signer,
+          lockedAccount: lockedAccount,
+        })
+        .signers([payer])
+        .rpc();
+
+      // console.log("Your transaction signature", tx);
+
+      const latestBlockHash = await connection.getLatestBlockhash()
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: tx,
+      }, "confirmed");
+
+    })
+
   })
 
-
-  it("initialize locked account state to keep track of staked NFT.", async () => {
-
-    const {
-      mintAuthority: program_signer,
-    } = token.getAccounts()
-
-    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        user.authority.publicKey.toBuffer(),
-        user.nftAccount.toBuffer(),
-        user.nftMint.publicKey.toBuffer(),
-        program_signer.toBuffer(),
-      ],
-      program.programId
-    )
-
-    const tx = await program.methods.initializeLockedAccount(bump)
-      .accounts({
-        authority: user.authority.publicKey,
-        programSigner: program_signer,
-        lockedAccount: lockedAccount,
-        nftOwner: user.nftAccount,
-        nftMint: user.nftMint.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([user.authority])
-      .rpc();
-
-    // console.log("Your transaction signature", tx);
-
-    const latestBlockHash = await connection.getLatestBlockhash()
-
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: tx,
-    }, "confirmed");
-
-    // add assertions to check for if account state is initialized with correct state
-    // const account = await getAccount(
-    //   provider.connection,
-    //   user.nftAccount
-    // )
-
-    // const mint = await getMint(
-    //   provider.connection,
-    //   user.nftMint.publicKey
-    // )
-
-    // console.log(account)
-
-    // console.log(mint)
-  })
-
-
-  it("stake NFT.", async () => {
-
-    const {
-      mintAuthority: program_signer,
-    } = token.getAccounts()
-
-    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        user.authority.publicKey.toBuffer(),
-        user.nftAccount.toBuffer(),
-        user.nftMint.publicKey.toBuffer(),
-        program_signer.toBuffer(),
-      ],
-      program.programId
-    )
-
-
-    const tx = await program.methods.stakeAccount()
-      .accounts({
-        authority: user.authority.publicKey,
-        programSigner: program_signer,
-        lockedAccount: lockedAccount,
-        nftOwner: user.nftAccount,
-        nftMint: user.nftMint.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([user.authority])
-      .rpc();
-
-    // console.log("Your transaction signature", tx);
-
-    const latestBlockHash = await connection.getLatestBlockhash()
-
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: tx,
-    }, "confirmed");
-
-    // const account = await getAccount(
-    //   provider.connection,
-    //   user.nftAccount
-    // )
-
-    // const mint = await getMint(
-    //   provider.connection,
-    //   user.nftMint.publicKey
-    // )
-
-    // console.log(account)
-
-    // console.log(mint)
-  })
-
-
-  it("unstake NFT.", async () => {
-
-    const {
-      mintAuthority: program_signer,
-      tokenMint
-    } = token.getAccounts()
-
-    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        user.authority.publicKey.toBuffer(),
-        user.nftAccount.toBuffer(),
-        user.nftMint.publicKey.toBuffer(),
-        program_signer.toBuffer(),
-      ],
-      program.programId
-    )
-
-    await user.getAssociatedtoken(provider.connection, tokenMint)
-
-
-    const tx = await program.methods.unstakeAccount()
-      .accounts({
-        authority: user.authority.publicKey,
-        userAssociatedTokenAccount: user.associatedTokenAccount,
-        programSigner: program_signer,
-        lockedAccount: lockedAccount,
-        nftOwner: user.nftAccount,
-        nftMint: user.nftMint.publicKey,
-        tokenMint: tokenMint.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([user.authority])
-      .rpc();
-
-    // console.log("Your transaction signature", tx);
-
-    const latestBlockHash = await connection.getLatestBlockhash()
-
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: tx,
-    }, "confirmed");
-
-    // const account = await getAccount(
-    //   provider.connection,
-    //   user.nftAccount
-    // )
-
-    // const mint = await getMint(
-    //   provider.connection,
-    //   user.nftMint.publicKey
-    // )
-
-    // console.log(account)
-
-    // console.log(mint)
-  })
-
-
-  it("close locked account.", async () => {
-
-    const {
-      mintAuthority: program_signer,
-      payer,
-    } = token.getAccounts()
-
-    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        user.authority.publicKey.toBuffer(),
-        user.nftAccount.toBuffer(),
-        user.nftMint.publicKey.toBuffer(),
-        program_signer.toBuffer(),
-      ],
-      program.programId
-    )
-
-    const tx = await program.methods.closeLockedAccount()
-      .accounts({
-        payer: payer.publicKey,
-        programSigner: program_signer,
-        lockedAccount: lockedAccount,
-      })
-      .signers([payer])
-      .rpc();
-
-    // console.log("Your transaction signature", tx);
-
-    const latestBlockHash = await connection.getLatestBlockhash()
-
-    await connection.confirmTransaction({
-      blockhash: latestBlockHash.blockhash,
-      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-      signature: tx,
-    }, "confirmed");
-
-  })
 
   describe("run test in batch transaction:", () => {
 
@@ -591,12 +598,123 @@ describe("nft_stake_program", () => {
 
   })
 
+
   describe("TEST ERRORS:", () => {
-    const token = new Token()
-    const user = new User()
-    it("", async () => {
+
+
+    it("Transaction fails when Freeze Authority is None", async () => {
+
+      const {
+        mintAuthority: program_signer,
+      } = token.getAccounts()
+
+      const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          user.authority.publicKey.toBuffer(),
+          user.nftAccount.toBuffer(),
+          user.nftMint.publicKey.toBuffer(),
+          program_signer.toBuffer(),
+        ],
+        program.programId
+      )
+
+      try {
+
+        const tx = await program.methods.initializeLockedAccount(bump)
+          .accounts({
+            authority: user.authority.publicKey,
+            programSigner: program_signer,
+            lockedAccount: lockedAccount,
+            nftOwner: user.nftAccount,
+            nftMint: user.nftMint.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([user.authority])
+          .rpc();
+
+      } catch (err) {
+
+        assert(err.error.errorCode.code == "ConstraintRaw", "Freeze Authority is None")
+      }
 
     })
+
+    describe("", () => {
+
+      const user = new User()
+
+      before(async () => {
+
+        const [program_signer, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+          [Buffer.from("signer")],
+          program.programId
+        )
+
+        await user.generate(provider.connection)
+
+        const tx = await program.methods.mintNft()
+          .accounts({
+            user: user.authority.publicKey,
+            nftAccount: user.nftAccount,
+            nftMint: user.nftMint.publicKey,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([user.authority, user.nftMint])
+          .rpc()
+
+        const latestBlockHash = await connection.getLatestBlockhash()
+
+        await connection.confirmTransaction({
+          blockhash: latestBlockHash.blockhash,
+          lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+          signature: tx,
+        }, "confirmed");
+
+      })
+
+
+      it("Transaction fails when Freeze Authority doesn't match authority constraint", async () => {
+
+        const {
+          mintAuthority: program_signer,
+          payer
+        } = token.getAccounts()
+
+        const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+          [
+            user.authority.publicKey.toBuffer(),
+            user.nftAccount.toBuffer(),
+            user.nftMint.publicKey.toBuffer(),
+            program_signer.toBuffer(),
+          ],
+          program.programId
+        )
+
+        try {
+
+          const tx = await program.methods.initializeLockedAccount(bump)
+            .accounts({
+              authority: user.authority.publicKey,
+              programSigner: program_signer,
+              lockedAccount: lockedAccount,
+              nftOwner: user.nftAccount,
+              nftMint: user.nftMint.publicKey,
+              systemProgram: SystemProgram.programId,
+            })
+            .signers([user.authority])
+            .rpc();
+
+        } catch (err) {
+
+          assert(err.error.errorCode.code == "ConstraintRaw", "Freeze Authority doesn't match")
+        }
+
+      })
+
+    })
+
   })
 
 });

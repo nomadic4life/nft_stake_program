@@ -140,7 +140,7 @@ pub mod nft_stake_program {
     pub fn unstake_account(ctx: Context<UnstakeAccount>) -> Result<()> {
 
         let UnstakeAccount {
-            authority,
+            // authority,
             program_signer,
             nft_owner,
             nft_mint,
@@ -148,6 +148,7 @@ pub mod nft_stake_program {
             locked_account,
             user_associated_token_account,
             token_mint,
+            ..
         } = ctx.accounts;
 
         let bump = program_signer.bump.to_le_bytes();
@@ -173,7 +174,9 @@ pub mod nft_stake_program {
                 account_or_mint: nft_mint.to_account_info(),
             },
             &outer.as_ref(),
-        ), AuthorityType::FreezeAccount, Some(authority.key()))?;
+        ), AuthorityType::FreezeAccount, None)?;
+
+        // ), AuthorityType::FreezeAccount, Some(authority.key()))?;
 
         // compute rewards
         mint_to(CpiContext::new_with_signer(
@@ -315,13 +318,8 @@ pub struct InitializeLockedAccount<'info> {
 
     #[account(
         // need to verify is an NFT and meets SPL SPEC
-        // question is it possible to set the freeze authority if the freeze authority is already none?
-        // the way I reason about it, that it is not possible, if it were then anyone has the authority
-        // to make changes to the freeze authority. or is there anohter way to handle this?
         constraint = nft_mint.mint_authority.is_none()
         && nft_mint.supply == 1 && nft_mint.decimals == 0
-        
-        // want to test if using is_some will help prevent a panic?
         && nft_mint.freeze_authority.is_some()
         && nft_mint.freeze_authority.unwrap().as_ref() == authority.key().as_ref()
     )]
@@ -473,52 +471,3 @@ pub struct LockedAccount {
     pub locked_date: i64,
     pub bump: u8,
 }
-
-// NOTES:
-// Functionality
-//      NFT is not transferred out of user’s wallet when staked
-//      Authority over NFT token account is delegated to a PDA
-//      Program freezes user NFT token account preventing user from transferring the NFT
-//      Token account is thawed when user unstakes NFT
-//      Authority revoked from PDA so user has control over NFT again
-//      Tokens minted to user in the form of staking rewards upon unstaking NFT
-//      Unable to “unstake” any NFTs that User did not originally stake
-//      Every staker receives tokens of the same token mint as rewards
-
-// INIT:
-//  INITIALIZE PROGRAM SIGNER
-//  INITIALIZE PROGRAM TOKEN
-//  INITIALIZE PROGRAM ASSOCIATED TOKEN ACCOUNT
-// MINT TOKENS
-// MINT NFT
-//      - generate key pair [owner, mint_authority, freeze_authority]
-//      - token_program::create_token (owner, mint_authority, freeze_authority)
-//      - create_associated_token_account
-//      - mint_to 1 token to owner
-//      - set mint authority to null
-// STAKE NFT
-//      - set freeze authority to program.signer
-//      - freeze token
-//      - set stake date
-// UNSTAKE NFT
-//      - thaw token
-//      - revoke freeze authority
-//      - compute stake duration
-//      - compute rewards
-//      - transfer token rewards to NFT owner
-// COLLECT REWARDS
-
-// STATE
-// SIGNER
-//  - is_initialized
-//  - is_signer
-//  - program_id
-//  - token_mint
-//  - associated_token_account
-//  :TOKEN_ACCOUNT
-//  :ASSOCIATED_TOKEN_ACCOUNT
-// LOCKED NFT ACCOUNT
-//  - ?owner_account
-//  - ?nft_associated_token_account
-//  - ?nft_token_account
-//  - locked_date
