@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
-    // associated_token,
     associated_token::AssociatedToken,
     token::{
         Mint, 
@@ -14,8 +13,6 @@ use anchor_spl::{
         freeze_account,
         thaw_account,
         ThawAccount,
-        // transfer,
-        // Transfer,
     },
 };
 
@@ -28,6 +25,7 @@ pub mod nft_stake_program {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>, bump: u8) -> Result<()> {
+
         let Initialize {
             new_signer,
             token_mint,
@@ -207,6 +205,12 @@ pub mod nft_stake_program {
         return Ok(());
     }
 
+    pub fn close_locked_account(ctx: Context<CloseLockedAccount>) -> Result<()> {
+
+        msg!("SOL BALANCE: {}", ctx.accounts.program_signer.get_lamports());
+
+        return Ok(());
+    }
 
 }
 
@@ -430,6 +434,25 @@ pub struct MintTokens<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+#[derive(Accounts)]
+pub struct CloseLockedAccount<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut, 
+        constraint = !locked_account.is_locked,
+        close = program_signer
+    )]
+    pub locked_account: Account<'info, LockedAccount>,
+
+    #[account(
+        mut,
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+}
 
 #[account]
 pub struct SignerAccount {

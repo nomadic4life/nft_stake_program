@@ -149,7 +149,7 @@ describe("nft_stake_program", () => {
   const token = new Token()
   const user = new User()
 
-  before("", async () => {
+  before(async () => {
     console.log(process.argv.includes('unstake'))
     // await exec('solana-keygen new -o ./dependencies/wallets/main.json --force --no-bip39-passphrase')
     // await exec('solana airdrop 100 --keypair ./dependencies/wallets/main.json --commitment finalized')
@@ -174,7 +174,7 @@ describe("nft_stake_program", () => {
   })
 
 
-  it("initialize program state, signer, and token mint", async () => {
+  it("initialize program state, signer, and token mint.", async () => {
 
     const {
       tokenMint,
@@ -215,7 +215,7 @@ describe("nft_stake_program", () => {
   });
 
 
-  it("Mint NFT", async () => {
+  it("Mint NFT.", async () => {
 
     const tx = await program.methods.mintNft()
       .accounts({
@@ -286,7 +286,7 @@ describe("nft_stake_program", () => {
   })
 
 
-  it("stake NFT", async () => {
+  it("stake NFT.", async () => {
 
     const {
       mintAuthority: program_signer,
@@ -339,7 +339,8 @@ describe("nft_stake_program", () => {
     console.log(mint)
   })
 
-  it("unstake NFT", async () => {
+
+  it("unstake NFT.", async () => {
 
     const {
       mintAuthority: program_signer,
@@ -395,6 +396,56 @@ describe("nft_stake_program", () => {
     console.log(account)
 
     console.log(mint)
+  })
+
+
+  it("close locked account.", async () => {
+
+    const {
+      mintAuthority: program_signer,
+      payer,
+    } = token.getAccounts()
+
+    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        user.authority.publicKey.toBuffer(),
+        user.nftAccount.toBuffer(),
+        user.nftMint.publicKey.toBuffer(),
+        program_signer.toBuffer(),
+      ],
+      program.programId
+    )
+
+    const tx = await program.methods.closeLockedAccount()
+      .accounts({
+        payer: payer.publicKey,
+        programSigner: program_signer,
+        lockedAccount: lockedAccount,
+      })
+      .signers([payer])
+      .rpc();
+    console.log("Your transaction signature", tx);
+
+    const latestBlockHash = await connection.getLatestBlockhash()
+
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: tx,
+    }, "confirmed");
+  })
+
+  describe("run test in batch transaction:", () => {
+
+    it("", async () => {
+
+    })
+  })
+
+  describe("TEST ERRORS:", () => {
+    it("", async () => {
+
+    })
   })
 
 });
