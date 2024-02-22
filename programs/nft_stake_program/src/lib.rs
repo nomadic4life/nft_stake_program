@@ -12,6 +12,10 @@ use anchor_spl::{
         SetAuthority, 
         FreezeAccount,
         freeze_account,
+        thaw_account,
+        ThawAccount,
+        // transfer,
+        // Transfer,
     },
 };
 
@@ -103,7 +107,7 @@ pub mod nft_stake_program {
         } = ctx.accounts;
 
         let bump = program_signer.bump.to_le_bytes();
-        let inner=vec!["signer".as_ref(),bump.as_ref()];
+        let inner=vec!["signer".as_ref(), bump.as_ref()];
         let outer=vec![inner.as_slice()];
 
         let clock = Clock::get()?;
@@ -135,21 +139,63 @@ pub mod nft_stake_program {
         return Ok(());
     }
 
-    // pub fn unstake_account(ctx: Context<StakeAccount>) -> Result<()> {
+    pub fn unstake_account(ctx: Context<UnstakeAccount>) -> Result<()> {
 
-    //     let clock = Clock::get()?;
+        let UnstakeAccount {
+            authority,
+            program_signer,
+            nft_owner,
+            nft_mint,
+            token_program,
+            locked_account,
+            user_associated_token_account,
+            token_mint,
+        } = ctx.accounts;
 
-    //     // thaw mint
-    //     // revoke freeze authority
-    //     // compute rewards
-    //     // transfer rewards
+        let bump = program_signer.bump.to_le_bytes();
+        let inner=vec!["signer".as_ref(), bump.as_ref()];
+        let outer=vec![inner.as_slice()];
+
+        let clock = Clock::get()?;
+
+        thaw_account( CpiContext::new_with_signer(            
+            token_program.to_account_info(),
+            ThawAccount {
+                account: nft_owner.to_account_info(),
+                mint: nft_mint.to_account_info(),
+                authority: program_signer.to_account_info(),
+            }, 
+            &outer.as_ref(),
+        ))?;
+
+        set_authority( CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            SetAuthority {
+                current_authority: program_signer.to_account_info(),
+                account_or_mint: nft_mint.to_account_info(),
+            },
+            &outer.as_ref(),
+        ), AuthorityType::FreezeAccount, Some(authority.key()))?;
+
+        // compute rewards
+        mint_to(CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            MintTo {
+                mint: token_mint.to_account_info(),
+                to: user_associated_token_account.to_account_info(),
+                authority: program_signer.to_account_info(),
+            },
+            &outer.as_ref(),
+        ), 10)?;
 
         
-    //     ctx.accounts.locked_account.locked_date = clock.unix_timestamp;
-    //     ctx.accounts.locked_account.is_locked = false;
+        locked_account.locked_date = clock.unix_timestamp;
+        locked_account.is_locked = false;
 
-    //     return Ok(());
-    // }
+        // close locked_account
+
+        return Ok(());
+    }
 
     pub fn mint_tokens(ctx: Context<MintTokens>) -> Result<()> {
 
@@ -301,14 +347,56 @@ pub struct StakeAccount<'info> {
         ],
         bump
     )]
-    locked_account: Account<'info, LockedAccount>,
+    pub locked_account: Account<'info, LockedAccount>,
 
     #[account(mut)]
-    nft_owner: Account<'info, TokenAccount>,
+    pub nft_owner: Account<'info, TokenAccount>,
 
     #[account(mut)]
-    nft_mint: Account<'info, Mint>,
-    token_program: Program<'info, Token>,
+    pub nft_mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct UnstakeAccount<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"signer"],
+        bump
+    )]
+    pub program_signer: Account<'info, SignerAccount>,
+
+    #[account(
+        seeds = [
+            authority.key().as_ref(),
+            nft_owner.key().as_ref(),            
+            nft_mint.key().as_ref(),
+            program_signer.key().as_ref(),
+        ],
+        bump
+    )]
+    pub locked_account: Account<'info, LockedAccount>,
+
+    #[account(mut)]
+    pub nft_owner: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = user_associated_token_account.owner.key() == authority.key()
+    )]
+    pub user_associated_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(mut)]
+    pub nft_mint: Account<'info, Mint>,
+
+    pub token_program: Program<'info, Token>,
+    // pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

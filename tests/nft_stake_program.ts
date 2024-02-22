@@ -99,6 +99,20 @@ class User {
     this.nftAccount = account
     this.nftMint = mint
   }
+
+  getAssociatedtoken = async (connection: any, tokenMint: any) => {
+    const account = await getOrCreateAssociatedTokenAccount(
+      connection,
+      this.authority,
+      tokenMint.publicKey,
+      this.authority.publicKey,
+      true
+    )
+
+    this.associatedTokenAccount = account.address
+
+    return this.associatedTokenAccount
+  }
 }
 
 class Chain {
@@ -296,6 +310,64 @@ describe("nft_stake_program", () => {
         lockedAccount: lockedAccount,
         nftOwner: user.nftAccount,
         nftMint: user.nftMint.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([user.authority])
+      .rpc();
+    console.log("Your transaction signature", tx);
+
+    const latestBlockHash = await connection.getLatestBlockhash()
+
+    await connection.confirmTransaction({
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: tx,
+    }, "confirmed");
+
+    const account = await getAccount(
+      provider.connection,
+      user.nftAccount
+    )
+
+    const mint = await getMint(
+      provider.connection,
+      user.nftMint.publicKey
+    )
+
+    console.log(account)
+
+    console.log(mint)
+  })
+
+  it("unstake NFT", async () => {
+
+    const {
+      mintAuthority: program_signer,
+      tokenMint
+    } = token.getAccounts()
+
+    const [lockedAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        user.authority.publicKey.toBuffer(),
+        user.nftAccount.toBuffer(),
+        user.nftMint.publicKey.toBuffer(),
+        program_signer.toBuffer(),
+      ],
+      program.programId
+    )
+
+    await user.getAssociatedtoken(provider.connection, tokenMint)
+
+
+    const tx = await program.methods.unstakeAccount()
+      .accounts({
+        authority: user.authority.publicKey,
+        userAssociatedTokenAccount: user.associatedTokenAccount,
+        programSigner: program_signer,
+        lockedAccount: lockedAccount,
+        nftOwner: user.nftAccount,
+        nftMint: user.nftMint.publicKey,
+        tokenMint: tokenMint.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([user.authority])
